@@ -1,0 +1,786 @@
+#!/bin/bash -f
+# Uses GNU version of find
+#________________BEGIN USER SETTINGS________________
+# apply color to reg.-exp. in plain text output
+markstyle=r # red
+# markdown-settings:
+# Set your favorite markdown viewer, default: none (inactive)
+mdviewer=none # markdown-viewer, example: glow, or abs. path: /path/to/my/glow
+#markstyle=I # I=italic, B=bold
+# style for matching regular expressions:: most terminals support italic, but not bold
+# header-style for files with matching reg. expr.
+markhead='###'
+#________________END USER SETTINGS________________
+# do not edit below this line
+#
+myname=findngrep
+myname_lastchange="Thu Nov 21 22:51:26 CET 2024"
+usage=${myname}' [OPTIONS] <REGEXP1> [<REGEXP2> ... <REGEXPN>]'
+if [ "$#" -lt 1 ]; then
+    printf "Usage: "
+    echo $usage
+    printf 'Type "%s -h" for a help screen ("q" to quit help)\n' $myname
+    exit
+fi
+# formatting options, many ways of colored printing
+Lcolors=1 # 1: no color printing
+colors_ftit=(by m) # File fg,bg: default: bright-yellow, magenta
+lreplace_regex=0 # replace reg. expr.
+# ANSI escape codes for color output
+#Black        0;30     Dark Gray     1;30
+#Red          0;31     Light Red     1;31
+#Green        0;32     Light Green   1;32
+#Brown/Orange 0;33     Yellow        1;33
+#Blue         0;34     Light Blue    1;34
+#Purple       0;35     Light Purple  1;35
+#Cyan         0;36     Light Cyan    1;36
+#Light Gray   0;37     White         1;37
+# simple 4-bit color def.
+# black,red,grn,yel, blue,mag,cya,whi, bright-...
+colors=(k:30:40 r:31:41 g:32:42 y:33:43 \
+b:34:44 m:35:45 c:36:46 w:37:47 \
+bk:90:100 br:91:101 bg:92:102 by:93:103 \
+bb:94:104 bm:95:105 bc:96:106 bw:97:107)
+#TODOS:
+# -add option for shortcut:
+#   find . -type f -exec grep -Hn Permiss {} \;
+# findgrep -q
+# check if same output as findngrep with reg. args
+
+#
+# Functions
+#
+# Determine OS-type
+ostype() {
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  os=gnu
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+  os=mac # Mac OSX
+elif [[ "$OSTYPE" == "cygwin" ]]; then
+  os=cyg # POSIX compatibility layer and Linux environment emulation for Windows
+elif [[ "$OSTYPE" == "msys" ]]; then
+  os=msy # Lightweight shell and GNU utilities compiled for Windows (part of MinGW)
+elif [[ "$OSTYPE" == "win32" ]]; then
+  os=win # I'm not sure this can happen.
+elif [[ "$OSTYPE" == "freebsd"* ]]; then
+  os=fre
+else
+  os=gnu
+fi
+}
+
+endprg() { # end program, temp.-file cleanup before
+  for f in "${workfiles[@]}"; do
+    if [ -f $f ]; then # file exists
+      if [ $debug == "yes" ]; then
+        echo keeping output file $f
+      else
+        rm -f $f
+      fi
+    fi #-f
+  done
+  if [ $# -gt 0 ]; then # print message
+    echo $@
+  fi
+  if [ $loutfile -eq 1 ]; then # output filename set (-o option used)
+    echo '->' $outfile
+  else # show and then del. temp. output file
+    if [[ -r $outfile && -s $outfile ]]; then # readable, non-empty
+      if [ $mdviewer == "none" ]; then # plain-text output
+        cat $outfile
+      else # Markdown output: todo
+        $mdviewer $outfile
+      fi # mdviewer
+      rm -f $outfile
+    fi
+  fi # loutfile
+  exit
+} # endprg
+
+isempty() { # check for empty file/variable: TYPE VAR/FILE ARG
+  if [ $1 == "file" ]; then # check for file
+    [[ -s "$2" ]] && stat="notempty" || stat="empty"
+    if [ $stat == "empty" ]; then
+      rm -f $2 # remove the (empty) file
+      if [ $3 == "exit" ]; then # exit prg
+        printf "No matching files found\n" >> $outfile
+        loutfile=0
+        endprg
+      fi
+    fi #stat
+  else # check for empty variable
+    if [ -z "$2" ]; then
+      stat="empty"
+    else
+      stat="notempty"
+    fi
+  fi # $1=file/var
+} # isempty
+
+# unquote reg.-expr.
+unquote() {
+  stat=`echo "$1" | sed -e 's|["'\'']||g'`
+}
+
+runcom() { # run find/grep command, $1=temp. output file
+  e="${fcommand[@]}"
+  #IFS=' '; e="${fcommand[*]// / }"; IFS=$' \t\n'
+  #IFS=' '; e="${fcommand[*]}"
+  cp /dev/null $1 # temp. command output to file $1
+  if [ $2 -eq 1 ]; then # print/report command 
+    # assumed that "find:" or "grep:" was printed before
+    printf " %s\n" "$e" >> $outfile
+  fi
+  eval "$e" >> $1 2>&1
+  stat="$e" # for debug output
+  if [ $debug = "yes" ]; then
+    echo Command: "$e"
+  fi
+} # runcom
+
+regexmod() { # modify reg.-expr. for markdown or colored plain-text output
+# regexmod - modify the found reg. expr.
+  local s
+  # $1=grep output = to be rendered/modified in color/md
+  # $2=orig. filename from find-output containing grep-match
+  if [ $markstyle != "n" ]; then # formatting: markdown or color ANSI Esc.-Seq.
+    # markstyle=B/I: markdown bold/ital., markstyle=<lower-case char.> -> colored txt
+    cp /dev/null ${out}.sed # sed output file
+    for ((i=0; i<$nr; i++)); do
+      unquote "${REGEX[$i]}" # -> stat
+      #echo awk-args=${os},${stat},${out},${markstyle},${casei},
+      # if reg. expr. has leading "-": there may be message
+      # "awk: warning: escape sequence `\-' treated as plain `-'"
+      # here redirected to /dev/null
+      echo "$lib_AWK" | awk -v args=${os},${stat},${out},${markstyle},${casei}, -f /dev/stdin $1 2>/dev/null
+    done
+    if [ $markstyle == "I" ] || [ $markstyle == "B" ]; then # md-output, append 2 blanks at EOL
+      sed -f ${out}.sed $1 | awk '{printf("%s  \n",$0)}' >> $outmd
+    else
+      sed -f ${out}.sed $1 >> $outmd
+    fi
+    rm -f ${out}.sed
+  else # markstyle="n": plain-text
+    cat $1 >> $outmd
+    printf "\n" >> $outmd 
+  fi
+  # lreplace_regex: replace reg. expr. by new reg. expr.
+  if [ $lreplace_regex -eq 1 ]; then
+    cp /dev/null ${out}.sed # sed output file for string replacement
+    for ((i=0; i<$nr; i++)); do
+      #unquote "${REGEX_NEW[$i]}" # -> stat
+      s="${REGEX_NEW[$i]}" # -> stat
+      unquote "${REGEX[$i]}" # -> stat
+      echo "$lib_AWK" | awk -v args=${os},${stat},${out},${markstyle},${casei},${s} -f /dev/stdin $1 2>/dev/null
+    done
+    # $2= orig. filename
+    local fnew=$2".new"
+    sed -f ${out}.sed $2 > $fnew
+    mv $fnew $2 # replace orig. file by the one with new reg. expr.
+  fi 
+} # regexmod
+
+#
+# aux. AWK file for 
+#
+lib_AWK=$(cat << 'EOF'
+BEGIN{col["n"]="\033[0m" # color off
+# color code ex.: "\033[0;30m" #black 
+col["k"]=30;col["r"]=31;col["g"]=32 #bla,red,grn
+col["y"]=33;col["b"]=34;col["m"]=35 #yel,blu,mag
+col["c"]=36;col["w"]=37 #cya,whi
+# append bright-* for all col-entries
+for (c1 in col){c2=sprintf("b%s",c1);col[c2]=col[c1]+60}
+for (s in col){c1=sprintf("\033[0;%im",col[s]);col[s]=c1}
+col["B"]="**"; col["I"]="*" # md-style bold / italic
+c1="`"
+}NR==1{
+# Input: 1)${os},2)${regex},3)${out},4)${markstyle},5)${casei},6)${regex_new}
+n=split(args,a,",")
+os=a[1]; ci=int(a[5])
+if(ci)regex=tolower(a[2]) # case-insensitive search
+else regex=a[2]
+lr=length(regex)
+out=a[3]; s=a[4]; c1=col[s]
+if(c1=="I" || c1=="B")c2=c1
+else c2=col["n"]
+lrepl=length(a[6]) # replace regex by new regex
+if(lrepl){ # replace regex by regex_new
+  if(ci)regex_new=tolower(a[6]) # case-insensitive search
+  else regex_new=a[6]}
+eo="echo "; if(os!="mac")eo="echo -e "
+} #NR=1
+{ #main
+if(ci)line=tolower($0)
+else line=$0
+ll=length(line);lr=length(regex);l=1
+while(l<ll){
+  sl=substr(line,l,lr) # search in this line-part
+  if(sl==regex){
+    r=substr($0,l,lr) # orig. reg.-expr.
+    l+=lr
+    if(!lrepl){ # prepare new/colored reg.-exp. 
+      s=sprintf("%s%s%s",c1,r,c2)
+      lsed[r]=sprintf("s/%s/%s/g",r,s)
+    }else lsed[r]=sprintf("s/%s/%s/g",r,regex_new)
+  }else l++
+}
+}
+END{
+out=sprintf("%s.sed",out)
+for(r in lsed)print lsed[r] >> out} #END
+EOF
+)
+
+colortxt() {
+local cc
+if [ $Lcolors -eq 1 ]; then # color printing/formatting active
+  # $1=foreground color; $2=background color; $3=text to print
+  cc=("$1" "$2")  # foreground,background color names
+  #echo colortxt: ${cc[0]} ${cc[1]} ${colors[@]}
+  echo ${cc[0]} ${cc[1]} ${colors[@]} | awk '{split($0,a)
+for(i=3;i<=NF;i++){split(a[i],b,":");F[b[1]]=b[2];B[b[1]]=b[3]} # assign fg,bg col. arr.
+fg=$1; bg=$2 # fg-col-id, bg-col-id
+printf("\033[%s;%sm",F[fg],B[bg])
+}'
+fi # Lcolors
+printf "%s" "$3" # print text
+if [ $Lcolors -eq 1 ]; then # color printing/formatting active
+  printf "%b" '\033[0m' #reset
+fi
+if [ "$4" = "n" ]; then # print newline
+  printf "\n"
+fi
+} # colortxt
+
+formatxt() { # print text in color, bold, etc.
+local fb='\033[1m'
+local f0='\033[0m'
+case $1 in
+b) # bold
+  printf "%b" '\033[1m'
+  ;;
+i) # italic
+  printf "%b" '\033[3m'
+  ;;
+u) # underline
+  printf "%b" '\033[4m'
+  ;;
+k) # blinK
+  printf "%b" '\033[5m'
+  ;;
+r) # reverse
+  printf "%b" '\033[7m'
+  ;;
+H) # for help line
+  printf "findngrep - %bfind%b" $fb $f0
+  printf " files a%bn%bd" $fb $f0
+  printf " %bgrep%b for regular expression(s)\n" $fb $f0
+  ;;
+esac
+shift; printf "%s" "$1"
+printf "%b" '\033[0m' # reset
+if [ $# -gt 0 ]; then
+  shift
+  if [ "$1" = "n" ]; then # print newline
+    printf "\n"
+  fi
+fi
+} # formatxt
+
+
+#
+# Output of help screen
+#
+printhlp(){
+printf "NAME\n  " > $1
+formatxt H >> $1
+bs='\'
+cat<<EOF >> $1
+
+SYNOPSIS
+  $usage
+
+DESCRIPTION
+  findngrep performs a file search using the command find. Afterwards, a
+  series of grep-commands searches for N >= 1 regular expressions 
+  (REGEXP1,...,REGEXPN) in each file of find's output.
+  To keep things simple, here "regular expression" (reg. expr.) = "string",
+  because searching for the reg. expr. REGEXP1="Hello.*andMary" becomes a
+  search for the two strings REGEXP1="Hello" and REGEXP2="andMary".
+
+  findngrep's sole purpose is to ease your typing life by shortcutting
+  longer find-grep pipes. Let's have a look at two of those:
+  1) AND-case: Find files and grep for lines containing REGEXP1 and ...
+      REGEXP2 and ... and REGEXPN 
+     find DIRECTORY [OPTIONS] -exec grep REGEXP1 {} \; | grep [OPTIONS]
+       REGEXP2 | ... | grep [OPTIONS] REGEXPN
+     becomes
+     $myname [OPTIONS] REGEXP1 ... REGEXPN
+  2) OR-case: Find files and grep for lines containing REGEXP1 or REGEXP2 ...
+      or ... or REGEXPN 
+     find DIRECTORY [OPTIONS] -exec grep REGEXP1 {} \; -exec grep
+       [OPTIONS] REGEXP2 {} \; -exec ... -exec grep [OPTIONS] REGEXPN {} \;
+     becomes
+     $myname [OPTIONS] -or REGEXP1 ... REGEXPN
+  $myname realizes both search-cases, where the AND-case is the default.
+
+  The default "find"-behavior of $myname is to find all regular files in
+  the current directory and its subdirectories, hence
+  `colortxt y m "$myname REGEXP1"`
+  reverts to:
+  find . -type f -print -exec grep REGEXP1 {} \;	
+  The option "-f OPTIONS" enables a different find-behvior, for example:
+  `colortxt y m "$myname -f DIR REGEXP1"`
+  reverts to:
+  find DIR -type f -print -exec grep REGEXP1 {} \;
+  REGEXP1 can be omitted:
+  `colortxt y m "$myname -f \"-name '*.h'\""`
+  which reverts to just a find-command:
+  find . -name '*.h' -type f -print
+
+  A reg. expr. may contain blanks, in which case it must be enclosed
+  in quotes, for example:
+  `colortxt y m "$myname -f \"-name '*.h'\" \"Class Hcalc\""`
+  will grep for the expression "Class Hcalc", while
+  `colortxt y m "$myname -f \"-name '*.h'\" Class Hcalc"`
+  will grep lines containing the two expressions "Class" and "Hcalc",
+  hence lines containing "Hcalc Class" would also produce grep-matches.
+
+  More examples below. In the following, we will refer to the output of
+  $myname as find/grep-output.
+
+OPTIONS
+  -and
+    AND-pipe search: grep lines containing REGEXP1 and REGEXP2 and ...
+    This is the default case, so this option can be omitted.
+  -ar ARCHIVEFILE
+    File archiving. Save all files resulting from the find/grep-search
+    in archive ARCHIVEFILE. Archive type depends on the file ending of
+    ARCHIVEFILE. Default archive type is tar.
+  -c FG[,FGF,BGF]
+    Color selection. Up to three colors can be selected for the display
+    of find/grep results. FG=foreground text color of grep-matches,
+    FGF=foreground text color for the header line of file listings, 
+    BGF=background text color for the header line of file listings. 
+    Colors are to be selected through 1- or 2-character codes.
+    Available colors are:
+    k=black, r=red, g=green, y=yellow, b=blue, m=magenta, c=cyan, w=white.
+    bk=bright-black, br=bright-red, bg=bright-green, by=bright-yellow,
+    bb=bright-blue, bm=bright-magenta, bc=bright-cyan, bw=bright-white.
+    To print all available colors, use "-c h": `colortxt y m "$myname -c h"`
+    Examples for color selection:
+    `colortxt y m "$myname -c by -f \"-name '*.txt'\" f77"`
+      Find all files *.txt, descending from the current directory, and
+    grep for "f77". All instances of "f77" are displayed in by=bright-yellow. 
+    `colortxt y m "$myname -c b,g,bk -t -f \"mydir -name '*.sh'\" create"`
+      Find all files *.sh in and below directory "mydir" and grep for "create".
+    Grep-results will be displayed with foreground color blue (b).
+    Each file with a grep match will have a header line containing the
+    filename in foreground/background colors green (g) / bright-black (bk).
+  -debug
+    Enable debug-mode. Only for dev-purposes.
+  -f OPTIONS
+    User-defined find-options. By default, findngrep uses the option
+    "-type f": find only regular files. See the manpage of your installed
+    find-command for other options. Multiple words in OPTIONS need to be
+    quoted, for example: 
+    `colortxt y m "$myname -f \"-name '*.cpp'\"  # find all files *.cpp"`  
+  -g OPTIONS
+    User-defined grep-options. By default, $myname uses the options
+    "-Hn --binary-files=without-match": print filename headers and line
+    numbers, unmatch binary-file matches.
+    A typical choice for OPTIONS might be "-i": case-insensitive matching.
+    Multiple words in OPTIONS need to be quoted. OPTIONS apply to all the
+    greps of an and/or chain.
+  -h
+    Print this help-screen.
+  -i
+    Shortcut for the grep-option -g "-i".
+  -l
+    write a list of files that have a find/grep match.
+  -o OUTPUT
+    Save find/grep output in file OUTPUT. Default: print to stdout.  
+  -or
+    OR-pipe search: grep lines containing REGEXP1 or REGEXP2 or ...
+  -r
+    Replace the set of regular expresssions (REGEXP1,REGEXP2,...,REGEXPN)
+    by a corresponding set (REGEXP1_NEW,REGEXP2_NEW,...,REGEXPN_NEW).
+    The order of the reg. expr. is then pair-wise:
+    `colortxt y m "$myname [OPTIONS] <REGEXP1> <REGEXP1_NEW> ${bs}  "`
+    `colortxt y m "                    <REGEXP2> <REGEXP2_NEW> ..."`
+    Example:
+    `colortxt y m "$myname -f \"~/usr/lib -name 'Cython*.c'\" -r \"static PyObject\" ${bs}"`
+    `colortxt y m "    \"static PyObject_\"                                           "`
+      Descending into directory ~/usr/lib, find all files Cython*.c. Here,
+    one wants to find all lines containing "static PyObject", and change
+    this reg. expr. to "static PyObject_". Therefore:
+    REGEXP1="static PyObject", REGEXP1_NEW="static PyObject_".
+    `colortxt y m "$myname -f \"~/usr/lib -name 'Cython*.c'\" -r static static ${bs}    "`
+    `colortxt y m "    PyObject PyObject_                                           "`
+      Here, we have two reg. expr. pairs:
+    1) REGEXP1="static",   REGEXP1_NEW="static",
+    2) REGEXP2="PyObject", REGEXP2_NEW="PyObject_"
+    All lines containing "static" and "PyObject" will be changed so that they
+    contain "static" and "PyObject_" afterwards. Note that lines where "static"
+    occurs after "PyObject" also produce grep-matches.
+    `formatxt b Caution`: The "-r" option overwrites all files with a find/grep-match. It is
+    thus recommended to create a copy beforehand. For the previous example:
+    `colortxt y m "$myname -f \"~/usr/lib -name 'Cython*.c'\" -ar orig_StPo.tar ${bs}   "`
+    `colortxt y m "    static PyObject                                              "`
+  -t
+    Print a tree of the file/grep-output (requires the command "tree").
+
+EXAMPLES
+`colortxt y m "$myname -f \"~/Backups/August -newer lastSaveAug.txt\" 'Coord. = UTM' 30.6"`
+  In directory ~/Backups/August, find all files with a more recent
+modification time than lastSaveAug.txt. For the files found, search for
+the two expressions "Coord. = UTM" and "30.6".
+`colortxt y m "$myname -f \"./Sources/cpp -name '*.cpp'\" -ar cppfiles.tar ${bs}"`
+`colortxt y m "  -or -g \"-i\" \"Class PrintRecord\" \"Class PrintRecords\"       "`
+  In directory ./Sources/cpp, find all files *.cpp and perform a case-
+insensitive OR-grep for two reg. expr. Hence, all lines containing either
+"class printrecord" or "class printrecords" will produce a grep-match.
+Further, all files with a grep-match will be archived in cppfiles.tar.
+
+AUTHOR
+$myname was written by Michael Commer, last change: $myname_lastchange
+Questions/Bugs/Comments? - micha@on.br
+
+EOF
+$PAGER $1
+}
+
+#----------------------------------------------
+# Begin MAIN                                  |
+#----------------------------------------------
+# reg. expr. arrays
+REGEX=()
+REGEX_NEW=()
+# user-def.  find-args
+fargs=()
+# user-def. grep-args
+gargs=()
+# styp: search with REGEXP and ... or REGEXP or ... (def.: |=and)
+styp=and # search with REGEXP and ... or REGEXP or ...
+stypc='&'
+# debug option (only for dev-purposes)
+debug=no
+# Output file
+loutfile=0
+# List of files with find/grep match
+outfilelist=""
+# Print tree of find/grep results
+louttree=0
+# File-archiving option
+archive_file=""
+archive_exe=tar #default
+# OS type
+ostype # -> os = OS name (some stuff (formatting, etc.) may depend on (Mac) OS
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+  -and) # and-grep (default)
+    styp=and
+    stypc='&'
+    shift # past option
+    ;;
+  -ar) # archiving option: -ar OUTFILE
+    archive_file=$2
+    shift; shift # past option, past value
+    ;;
+  -c) # color selection: 1)output color for reg.-expr., 2+3) Fg,Bg for File
+    s=`echo "$2" | awk '{n=split($1,a,",");s=sprintf("markstyle=%s",a[1]);if(n>2)s=sprintf("%s;colors_ftit=(%s %s)",s,a[2],a[3])}END{print s}'`
+    eval "$s"
+    #echo Colors $markstyle ${colors_ftit[@]}
+    shift; shift # past option, past value
+    if [ $markstyle = "h" ]; then # show color demo
+      i=0 # 0-based index
+      fcommand=(k=black r=red g=green y=yellow b=blue m=magenta c=cyan w=white \
+      bk=bright-black br=bright-red bg=bright-green by=bright-yellow \
+      bb=bright-blue bm=bright-magenta bc=bright-cyan bw=bright-white)
+      printf "The following colors are available under %s:\n" $myname
+      formatxt u "ID           Color            Output on your terminal" n
+      for s in ${fcommand[@]}; do
+        echo $s | awk '{split($1,a,"=");printf("%2s  %14s%12s",a[1],a[2]," ")}'
+        # colors=(k:30:40 r:31:41 g:32:42...,  color code ex.: "\033[0;30m"=black 
+        # set foregr. col.
+        echo ${colors[$i]} | awk '{split($1,a,":");printf("\033[0;%smforeground\033[0m   ",a[2])}'
+        # set backgr. col.
+        echo ${colors[$i]} | awk '{split($1,a,":");printf("\033[0;%smbackground\033[0m\n",a[3])}'
+        ((i++))
+      done
+      exit
+    fi
+    ;;
+  -debug) # for dev: debugging on
+    debug=yes
+    printf "%s: debug mode=%s\n" $myname $debug
+    shift
+    ;;
+  -f) # find-options
+    fargs+=("$2")
+    shift; shift # past option, past value
+    ;;
+  -g) # grep-options
+    gargs+=("$2")
+    shift; shift # past argument, past value
+    ;;
+  -h) # help
+    styp="hlp"
+    shift; break
+    ;;
+  -i) # grep-option "-i" (shortcut for -g "-i")
+    gargs+=('-i')
+    shift # past value
+    ;;
+  -l) # write filelist with find/grep match
+    outfilelist=$2
+    shift; shift # past option, past value
+    ;;
+  -m) # markdown viewer: -m VIEWER,STYLE
+    # MD-viewer
+    r=`echo "$2" | awk '{n=split($1,a,",");if(n)print a[1]}'` # md-viewer
+    isempty var "$r"
+    if [ "${stat}" == "notempty" ]; then
+      mdviewer=$r
+      # check if mdviewer can be found
+      command -v $mdviewer >/dev/null 2>&1 || { echo >&2 "${myname}: markdown viewer $mdviewer not found"; exit; }
+    fi
+    # MD style
+    r=`echo "$2" | awk '{n=split($1,a,",");if(n>1)print a[2]}'` # md-style
+    isempty var "$r"
+    markstyle=I # default
+    if [ "${stat}" == "notempty" ] && [ "$r" == "b" ]; then
+      markstyle=B
+    fi
+    shift; shift # past argument, past value
+    ;;
+  -o) # output file
+    outfile="$2"; loutfile=1
+    # assume MD, if markstyle already =B, keep, otherwise markstyle=I
+    if [ "${outfile:(-3)}" == ".md" ] && [ $markstyle != "B" ]; then # markst. not yet set
+      markstyle=I # default
+    fi
+    shift; shift # past argument, past value
+    ;;
+  -or) # or-grep
+    styp=or; stypc='|'
+    shift # past option
+    ;;
+  -r) # replace reg. expr. func.
+    lreplace_regex=1 # replace reg. expr.
+    shift # past option
+    ;;
+  -t) # print tree of output
+    if command -v tree >/dev/null 2>&1; then # tree command works
+      louttree=1
+    fi
+    shift # past option
+    ;;
+  *) # everything else treated as reg. expr.
+    #REGEX+=(\'"$1"\') # save positional arg
+    # reg. expr. may containing leading "-"
+    s=`echo "$1" | awk '{bs="\\\";r=$0;if(index($0,"-")==1)r=sprintf("%s%s",bs,$0);printf("%s",r)}'`
+    #echo +REGEX="$s"
+    REGEX+=(\'"$s"\') # save positional arg
+    r="$s" # for reporting
+    shift # past argument
+    if [ $lreplace_regex -eq 1 ]; then # replace reg. expr.
+      # get corresp. REGEX_NEW for last REGEX
+      if [ -n "$1" ]; then
+        s=`echo "$1" | awk '{bs="\\\";r=$0;if(index($0,"-")==1)r=sprintf("%s%s",bs,$0);printf("%s",r)}'`
+        REGEX_NEW+=("$s")
+        printf "Replacing %s -> %s\n" "$r" "$s"
+        shift
+      else
+        printf "Incomplete reg.-expr. pair for option \"-r\":\n"
+        printf "missing matching reg. expr. for \"%s\"\n" "$r"
+        exit 1
+      fi
+    fi
+    ;;
+  esac
+done #while [[ $# -gt 0 ]]; do
+#echo regex: ${#REGEX[@]} ${REGEX[@]}
+#echo newex: ${#REGEX_NEW[@]} ${REGEX_NEW[@]}
+if [ $lreplace_regex -eq 1 ]; then # replace reg. expr.
+  if [ ${#REGEX[@]} -ne ${#REGEX_NEW[@]} ]; then
+    printf "Incomplete reg.-expr. pair for option \"-r\":\n"
+    printf "Need one matching new reg. expr. for each reg. expr.\n"
+    exit 1
+  fi
+fi
+
+# temp. workfiles
+if [ $debug == "no" ]; then
+    r=`date "+t_%M_%S"`
+    out='.'${myname}_${r}
+else
+    out=A$myname
+fi
+outmd=${out}.md
+ftmp1=${out}.tmp1
+workfiles=($out $outmd $ftmp1 ${out}.files)
+if [ $loutfile -eq 0 ]; then # create temp. output file
+  outfile=${out}.out
+fi
+# help screen
+if [[ "$styp" == "hlp" ]]; then # print help screen and exit
+    r=`date "+t_%F"`
+    ftmp1='.'${myname}_${r}_help.txt
+    printhlp $ftmp1
+    rm -f $ftmp1
+    exit
+fi
+# find-args
+if [ "${#fargs[@]}" -eq 0 ]; then
+  fargs0=('.')
+else
+  if [[ "${fargs[0]}" =~ ^- ]]; then # str. beg. w. "-"
+    fargs0=('.' "${fargs[@]}")
+  else
+    fargs0=("${fargs[@]}")
+  fi
+fi
+fargs0+=('-type f -print')
+nr="${#REGEX[@]}"
+# Check for "-i" option (case-insensit.) in grep-args (gargs)
+casei=0
+for f in "${gargs[@]}"; do
+  if [[ "$f" == "-i" ]]; then # case-insensitive search
+    casei=1
+  fi
+done
+
+# outfile 
+cp /dev/null $outfile # final output/reporting file
+#
+# 1) find
+#
+fcommand=(find "${fargs0[@]}")
+formatxt r "find:" >> $outfile
+runcom $out 1 # -> $out
+if [ $debug == "yes" ]; then
+    echo OS=$os
+    printf "running find command=\n"
+    echo "$stat"
+fi
+isempty file $out exit # check for empty file, if empty, exit
+# delete $out from find output (some find versions don't have the printf option)
+sed "/$out/d" $out > ${out}.files
+i=`wc -l ${out}.files | awk '{print $1}'`
+printf "Total number of files found: %d\n" $i >> $outfile
+#
+# 2) grep, start AND/OR-search
+#
+#
+print_result_file(){ # for color/md-formatted output
+#$1: temp. file with find-command's output; $2: FILENAME
+local s=""
+isempty file $1 cont # -> $stat
+if [ $stat == "notempty" ]; then # file $2 contains grep-match
+  ((nfile_grp++))
+  echo $2 >> ${out}.filesg # append to list of files with a grep-match
+  if [ $mdviewer = "none" ]; then
+    s=$(printf "File#%d %s:\n" $nfile_grp $2)
+  else
+    s=$(printf "%s File#%d %s %s\n" $markhead $nfile_grp $2 $markhead)
+  fi
+  colortxt "${colors_ftit[@]}" "$s" n >> $outmd # header-line "File: FILENAME"
+  regexmod $1 $2 # append md/txt-formatted grep-output to $outmd
+fi
+} # print_result_file
+ 
+# nr>0: do grep command and reporting, otherwise skip
+nfile_grp=0 # number of files with a grep-match
+if [ $nr -gt 0 ]; then # no reg. expr., exit after find command
+  cp /dev/null $outmd # final grep-output (txt or MD format)
+  cp /dev/null ${out}.filesg # list of files with a grep-match
+  formatxt r "grep:" >> $outfile
+  fcommand_sav=""
+#1)______________________.
+#|find with AND-case grep|
+#|_______________________|
+  if [ $styp == "and" ]; then # | chain
+    for f in `cat ${out}.files`; do # build seq. of grep pipes
+      #echo REGEX0= "${REGEX[0]}"
+      fcommand=('grep -n --binary-files=without-match' "${gargs[@]}" "${REGEX[0]}" $f) # 1st grep
+      for ((i=1; i<$nr; i++)); do
+        fcommand+=('| grep ' "${gargs[@]}" "${REGEX[$i]}") # save positional arg
+      done
+      runcom $ftmp1 0 # -> $ftmp1
+      print_result_file $ftmp1 $f # $ftmp1=temp. find-output, f  >>$outmd
+      if [ -z "$fcommand_sav" ]; then
+        fcommand_sav=$(IFS=' ';echo "${fcommand[*]}")
+      fi
+    done # for f
+#2)_____________________.
+#|find with OR-case grep|
+#|______________________|
+#
+  else
+    for f in `cat ${out}.files`; do # apply grep for each reg.-expr.
+      cp /dev/null $out # grep output
+      for ((i=0; i<"${#REGEX[@]}"; i++)); do
+        fcommand=('grep -n --binary-files=without-match' "${gargs[@]}" "${REGEX[i]}" $f)
+        runcom $ftmp1 0 # run fcommand -> $ftmp1
+        if [ $debug == "yes" ]; then
+          printf "running grep command=\n"
+          echo "$stat"
+        fi
+        cat $ftmp1 >> $out # $ftmp1 may be empty output
+        if [ -z "$fcommand_sav" ]; then
+          fcommand_sav=$(IFS=' ';echo "${fcommand[*]}")
+        fi
+      done #i
+      print_result_file $out $f # temp. find-output, f  >>$outmd
+    done #for f
+  fi # AND/OR - case
+#
+# render Markdown or plain-text output (outmd = output file)
+#
+#beg: reporting of grep chain
+  r=("${REGEX[0]}")
+  for ((i=1; i<$nr; i++)); do
+    r+=(,"${REGEX[$i]}")
+  done #i
+  if [ $styp == "and" ]; then
+    echo ' ('"${r[@]}"')' | sed "s/ ,/ \& /g" >> $outfile
+  else
+    echo ' ('"${r[@]}"')' | sed "s/ ,/ \| /g" >> $outfile
+  fi
+  printf "%s\n" "$fcommand_sav" >> $outfile
+  printf "Number of files with grep-matches: %d\n" $nfile_grp >> $outfile
+#end: reporting of grep chain
+  mv ${out}.filesg ${out}.files
+fi # $nr>0
+# here ${out}.files: nr>0: all files with grep-match, nr=0: files found by find com.
+nfiles=`wc -l ${out}.files | awk '{print $1}'`
+if [ $nfiles -gt 0 ]; then
+  if [ $louttree -eq 1 ]; then
+    tree --fromfiles ${out}.files -o $ftmp1
+    awk '{if(NR>1)print $0}' $ftmp1 >> $outfile
+  fi
+  # Create archive from all files with a find/grep-match
+  if [ -n "$archive_file" ]; then
+    if [ $archive_exe = "tar" ]; then
+      tar cf $archive_file --files-from=${out}.files >> $outfile
+    #else # todo
+    fi
+    printf "created %s-archive with %d files containing grep-matches: %s\n" $archive_exe $nfiles $archive_file >> $outfile
+  fi
+  # write list of files with find/grep match
+  if [ -n "$outfilelist" ]; then
+    cp ${out}.files $outfilelist
+    printf "created file-list with find/grep-matches: %s\n" $outfilelist >> $outfile
+  fi
+fi #nfiles
+#
+if [ $nr -gt 0 ]; then # nr=0: no reg. expr., only find command
+  formatxt r "Files with grep-matches:" n >> $outfile
+  cat $outmd >> $outfile
+else
+  cat ${out}.files >> $outfile
+fi
+endprg # cleanup
