@@ -313,13 +313,13 @@ DESCRIPTION
   longer find-grep pipes. Let's have a look at two of those:
   1) AND-case: Find files and grep for lines containing REGEXP1 and ...
       REGEXP2 and ... and REGEXPN 
-     find DIRECTORY [OPTIONS] -exec grep REGEXP1 {} \; | grep [OPTIONS]
+     find . [OPTIONS] -exec grep REGEXP1 {} \; | grep [OPTIONS]
        REGEXP2 | ... | grep [OPTIONS] REGEXPN
      becomes
      $myname [OPTIONS] REGEXP1 ... REGEXPN
   2) OR-case: Find files and grep for lines containing REGEXP1 or REGEXP2 ...
       or ... or REGEXPN 
-     find DIRECTORY [OPTIONS] -exec grep REGEXP1 {} \; -exec grep
+     find . [OPTIONS] -exec grep REGEXP1 {} \; -exec grep
        [OPTIONS] REGEXP2 {} \; -exec ... -exec grep [OPTIONS] REGEXPN {} \;
      becomes
      $myname [OPTIONS] -or REGEXP1 ... REGEXPN
