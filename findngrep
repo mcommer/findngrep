@@ -579,26 +579,32 @@ while [[ $# -gt 0 ]]; do
     shift # past option
     ;;
   *) # everything else treated as reg. expr.
-    #REGEX+=(\'"$1"\') # save positional arg
-    # reg. expr. may containing leading "-"
-    s=`echo "$1" | awk '{bs="\\\";r=$0;if(index($0,"-")==1)r=sprintf("%s%s",bs,$0);printf("%s",r)}'`
-    #echo +REGEX="$s"
-    REGEX+=(\'"$s"\') # save positional arg
-    r="$s" # for reporting
-    shift # past argument
-    if [ $lreplace_regex -eq 1 ]; then # replace reg. expr.
-      # get corresp. REGEX_NEW for last REGEX
-      if [ -n "$1" ]; then
-        s=`echo "$1" | awk '{bs="\\\";r=$0;if(index($0,"-")==1)r=sprintf("%s%s",bs,$0);printf("%s",r)}'`
-        REGEX_NEW+=("$s")
-        printf "Replacing %s -> %s\n" "$r" "$s"
-        shift
-      else
-        printf "Incomplete reg.-expr. pair for option \"-r\":\n"
-        printf "missing matching reg. expr. for \"%s\"\n" "$r"
-        exit 1
-      fi
-    fi
+    # If reg. expr. contains "/", treat it as find arg. DIRECTORY
+    if [[ "$1" == *"/"* ]]; then
+      fargs+=("$1")
+      echo fargs=${fargs[@]}
+      shift # past argument
+    else
+      # reg. expr. may containing leading "-"
+      s=`echo "$1" | awk '{bs="\\\";r=$0;if(index($0,"-")==1)r=sprintf("%s%s",bs,$0);printf("%s",r)}'`
+      #echo +REGEX="$s"
+      REGEX+=(\'"$s"\') # save positional arg
+      r="$s" # for reporting
+      shift # past argument
+      if [ $lreplace_regex -eq 1 ]; then # replace reg. expr.
+        # get corresp. REGEX_NEW for last REGEX
+        if [ -n "$1" ]; then
+          s=`echo "$1" | awk '{bs="\\\";r=$0;if(index($0,"-")==1)r=sprintf("%s%s",bs,$0);printf("%s",r)}'`
+          REGEX_NEW+=("$s")
+          printf "Replacing %s -> %s\n" "$r" "$s"
+          shift
+        else
+          printf "Incomplete reg.-expr. pair for option \"-r\":\n"
+          printf "missing matching reg. expr. for \"%s\"\n" "$r"
+          exit 1
+        fi
+      fi # lreplace_regex
+    fi # $1~/
     ;;
   esac
 done #while [[ $# -gt 0 ]]; do
@@ -741,16 +747,16 @@ if [ $nr -gt 0 ]; then # no reg. expr., exit after find command
 # render Markdown or plain-text output (outmd = output file)
 #
 #beg: reporting of grep chain
+  printf " %s\nReg.-expr. list: " "$fcommand_sav" >> $outfile
   r=("${REGEX[0]}")
   for ((i=1; i<$nr; i++)); do
     r+=(,"${REGEX[$i]}")
   done #i
   if [ $styp == "and" ]; then
-    echo ' ('"${r[@]}"')' | sed "s/ ,/ \& /g" >> $outfile
+    echo '('"${r[@]}"')' | sed "s/ ,/ \& /g" >> $outfile
   else
-    echo ' ('"${r[@]}"')' | sed "s/ ,/ \| /g" >> $outfile
+    echo '('"${r[@]}"')' | sed "s/ ,/ \| /g" >> $outfile
   fi
-  printf "%s\n" "$fcommand_sav" >> $outfile
   printf "Number of files with grep-matches: %d\n" $nfile_grp >> $outfile
 #end: reporting of grep chain
   mv ${out}.filesg ${out}.files
@@ -759,6 +765,9 @@ fi # $nr>0
 nfiles=`wc -l ${out}.files | awk '{print $1}'`
 if [ $nfiles -gt 0 ]; then
   if [ $louttree -eq 1 ]; then
+    # replace ".." by "'..'" to ensure proper display with tree cmd
+    awk 'BEGIN{s=sprintf("'\''..'\''")}{gsub(/\.\./,s);print $0}' ${out}.files > $ftmp1
+    mv $ftmp1 ${out}.files
     tree --fromfiles ${out}.files -o $ftmp1
     awk '{if(NR>1)print $0}' $ftmp1 >> $outfile
   fi
