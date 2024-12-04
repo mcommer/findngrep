@@ -14,7 +14,7 @@ markhead='###'
 # do not edit below this line
 #
 myname=findngrep
-myname_lastchange="Thu Nov 21 22:51:26 CET 2024"
+myname_lastchange="Wed Dec 04 15:40:37 CET 2024"
 usage=${myname}' [OPTIONS] <REGEXP1> [<REGEXP2> ... <REGEXPN>]'
 if [ "$#" -lt 1 ]; then
     printf "Usage: "
@@ -328,47 +328,51 @@ DESCRIPTION
   The default "find"-behavior of $myname is to find all regular files in
   the current directory and its subdirectories, hence
   `colortxt y m "$myname REGEXP1"`
-  reverts to:
-  find . -type f -print -exec grep REGEXP1 {} \;	
-  The option "-f OPTIONS" enables a different find-behvior, for example:
+  reverts to: find . -type f -print -exec grep REGEXP1 {} \;	
+  The option "-f OPTIONS" enables a different find-behaviour, for example:
   `colortxt y m "$myname -f DIR REGEXP1"`
-  reverts to:
-  find DIR -type f -print -exec grep REGEXP1 {} \;
+  reverts to: find DIR -type f -print -exec grep REGEXP1 {} \;
   REGEXP1 can be omitted:
   `colortxt y m "$myname -f \"-name '*.h'\""`
-  which reverts to just a find-command:
-  find . -name '*.h' -type f -print
+  reverts to just a find-command: find . -name '*.h' -type f -print
+  If your only input to find is a directory name, $myname accepts the slash
+  as an indicator, therefore
+  `colortxt y m "$myname DIR/ REGEXP1"`
+  is equivalent to
+  `colortxt y m "$myname -f DIR REGEXP1"`
+  Note that ".." as directory names are also allowed, for example:
+  `colortxt y m "$myname ../.. REGEXP1"`
 
   A reg. expr. may contain blanks, in which case it must be enclosed
   in quotes, for example:
   `colortxt y m "$myname -f \"-name '*.h'\" \"Class Hcalc\""`
   will grep for the expression "Class Hcalc", while
   `colortxt y m "$myname -f \"-name '*.h'\" Class Hcalc"`
-  will grep lines containing the two expressions "Class" and "Hcalc",
+  will grep lines containing the two expressions "Class" AND "Hcalc",
   hence lines containing "Hcalc Class" would also produce grep-matches.
 
   More examples below. In the following, we will refer to the output of
-  $myname as find/grep-output.
+  $myname as find/grep-output or find/grep-match.
 
 OPTIONS
   -and
     AND-pipe search: grep lines containing REGEXP1 and REGEXP2 and ...
     This is the default case, so this option can be omitted.
   -ar ARCHIVEFILE
-    File archiving. Save all files resulting from the find/grep-search
+    File archiving. Save all files resulting from the find/grep-output
     in archive ARCHIVEFILE. Archive type depends on the file ending of
-    ARCHIVEFILE. Default archive type is tar.
+    ARCHIVEFILE. Default archive type is tar. (currently only tar)
   -c FG[,FGF,BGF]
     Color selection. Up to three colors can be selected for the display
-    of find/grep results. FG=foreground text color of grep-matches,
-    FGF=foreground text color for the header line of file listings, 
-    BGF=background text color for the header line of file listings. 
+    of find/grep results. 1) FG=foreground text color of grep-matches,
+    2) FGF=foreground text color for the header line of file listings, 
+    3) BGF=background text color for the header line of file listings. 
     Colors are to be selected through 1- or 2-character codes.
     Available colors are:
     k=black, r=red, g=green, y=yellow, b=blue, m=magenta, c=cyan, w=white.
     bk=bright-black, br=bright-red, bg=bright-green, by=bright-yellow,
     bb=bright-blue, bm=bright-magenta, bc=bright-cyan, bw=bright-white.
-    To print all available colors, use "-c h": `colortxt y m "$myname -c h"`
+    To print all available colors: `colortxt y m "$myname -c h"`
     Examples for color selection:
     `colortxt y m "$myname -c by -f \"-name '*.txt'\" f77"`
       Find all files *.txt, descending from the current directory, and
@@ -377,7 +381,7 @@ OPTIONS
       Find all files *.sh in and below directory "mydir" and grep for "create".
     Grep-results will be displayed with foreground color blue (b).
     Each file with a grep match will have a header line containing the
-    filename in foreground/background colors green (g) / bright-black (bk).
+    filename in foreground / background colors green (g) / bright-black (bk).
   -debug
     Enable debug-mode. Only for dev-purposes.
   -f OPTIONS
@@ -392,13 +396,13 @@ OPTIONS
     numbers, unmatch binary-file matches.
     A typical choice for OPTIONS might be "-i": case-insensitive matching.
     Multiple words in OPTIONS need to be quoted. OPTIONS apply to all the
-    greps of an and/or chain.
+    greps, i.e. reg. expr., of an and/or chain.
   -h
     Print this help-screen.
   -i
     Shortcut for the grep-option -g "-i".
   -l
-    write a list of files that have a find/grep match.
+    write a list of files that have a find/grep-match.
   -o OUTPUT
     Save find/grep output in file OUTPUT. Default: print to stdout.  
   -or
@@ -423,15 +427,21 @@ OPTIONS
     2) REGEXP2="PyObject", REGEXP2_NEW="PyObject_"
     All lines containing "static" and "PyObject" will be changed so that they
     contain "static" and "PyObject_" afterwards. Note that lines where "static"
-    occurs after "PyObject" also produce grep-matches.
+    occurs after "PyObject" also produce grep-matches, for example:
+    Before: "static PyObject",              After: "static PyObject_"
+    This will produce a find/grep-match and thus be changed as well:
+    Before: "Class PyObject # static case", After: "Class PyObject_ # static def"
     `formatxt b Caution`: The "-r" option overwrites all files with a find/grep-match. It is
     thus recommended to create a copy beforehand. For the previous example:
-    `colortxt y m "$myname -f \"~/usr/lib -name 'Cython*.c'\" -ar orig_StPo.tar ${bs}   "`
+    `colortxt y m "$myname -f \"~/usr/lib -name 'Cython*.c'\" -ar orig_Cython.tar ${bs} "`
     `colortxt y m "    static PyObject                                              "`
   -t
     Print a tree of the file/grep-output (requires the command "tree").
 
-EXAMPLES
+MORE EXAMPLES
+`colortxt y m "$myname -f \"-name '*.h'\" -or Class Hcalc"`
+  Find all files *.h and grep for strings "Class" and "Hcalc" in OR-mode, so all
+lines containing "Class" or "Hcalc", or both, produce a find/grep-match.
 `colortxt y m "$myname -f \"~/Backups/August -newer lastSaveAug.txt\" 'Coord. = UTM' 30.6"`
   In directory ~/Backups/August, find all files with a more recent
 modification time than lastSaveAug.txt. For the files found, search for
