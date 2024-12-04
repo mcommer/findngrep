@@ -340,6 +340,7 @@ DESCRIPTION
   `colortxt y m "$myname DIR/ REGEXP1"`
   is equivalent to
   `colortxt y m "$myname -f DIR REGEXP1"`
+  This latter version is also needed if REGEXP contains a "/".
   Note that ".." as directory names are also allowed, for example:
   `colortxt y m "$myname ../.. REGEXP1"`
 
@@ -590,9 +591,9 @@ while [[ $# -gt 0 ]]; do
     ;;
   *) # everything else treated as reg. expr.
     # If reg. expr. contains "/", treat it as find arg. DIRECTORY
-    if [[ "$1" == *"/"* ]]; then
-      fargs+=("$1")
-      echo fargs=${fargs[@]}
+    if [[ ${#fargs[@]} -eq 0 && ${#REGEX[@]} -eq 0 && "$1" == *"/"* ]]; then
+      fargs=("$1")
+      #echo fargs=${fargs[@]}
       shift # past argument
     else
       # reg. expr. may containing leading "-"
@@ -660,6 +661,7 @@ else
   fi
 fi
 fargs0+=('-type f -print')
+#echo fargs0=${fargs0[@]}
 nr="${#REGEX[@]}"
 # Check for "-i" option (case-insensit.) in grep-args (gargs)
 casei=0
@@ -676,6 +678,9 @@ cp /dev/null $outfile # final output/reporting file
 #
 fcommand=(find "${fargs0[@]}")
 formatxt r "find:" >> $outfile
+if [ "${fargs0[0]}" = "/" ]; then
+  printf "Find command in progress: Searching the entire directory structure could take a while ...\n"
+fi
 runcom $out 1 # -> $out
 if [ $debug == "yes" ]; then
     echo OS=$os
@@ -684,7 +689,7 @@ if [ $debug == "yes" ]; then
 fi
 isempty file $out exit # check for empty file, if empty, exit
 # delete $out from find output (some find versions don't have the printf option)
-sed "/$out/d" $out > ${out}.files
+sed "/$out/d" $out | sed "/such file or directory/d" > ${out}.files
 i=`wc -l ${out}.files | awk '{print $1}'`
 printf "Total number of files found: %d\n" $i >> $outfile
 #
