@@ -16,7 +16,7 @@ Great, but which files contain these matching lines, and what are their line num
 Of course, you can start tweaking the above command accordingly, probably ending up
 with a long command. Let's skip this and just show the alternative:
 ```shell
-findngrep -f "~/usr/local -name '\*.cpp'" -i -t classio seek
+findngrep ~/usr/local \*.cpp -i -t classio seek
 ```
 which produces this (the tree-display is optional):
 ![fig1:findngrep output](fig1.png)
