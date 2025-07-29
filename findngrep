@@ -1298,7 +1298,7 @@ if [ $nfiles -gt 0 ]; then
     tree $opt_tree ${out}.files -o $ftmp1
     #cp $ftmp1 tree.out
     printf "\n" >> $outfile
-    [[ $nr -eq 0 ]] && s="find" || stat="grep"
+    [[ $nr -eq 0 ]] && s="find" || s="grep"
     formatxt u "Files with ${s}-matches:" n >> $outfile
     awk '{if(NR>1)print $0}' $ftmp1 >> $outfile
   fi
